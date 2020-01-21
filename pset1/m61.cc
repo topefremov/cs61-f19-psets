@@ -6,6 +6,13 @@
 #include <cinttypes>
 #include <cassert>
 
+static unsigned long long active_size = 0;
+static unsigned long long ntotal = 0;
+static unsigned long long total_size = 0;
+static unsigned long long nfail = 0;
+static unsigned long long fail_size = 0;
+static unsigned long long nfree = 0;
+
 /// m61_malloc(sz, file, line)
 ///    Return a pointer to `sz` bytes of newly-allocated dynamic memory.
 ///    The memory is not initialized. If `sz == 0`, then m61_malloc must
@@ -15,7 +22,15 @@
 void* m61_malloc(size_t sz, const char* file, long line) {
     (void) file, (void) line;   // avoid uninitialized variable warnings
     // Your code here.
-    return base_malloc(sz);
+    void* result = base_malloc(sz);
+    if (result != 0) {
+        ++ntotal;
+        total_size += sz;
+    } else {
+        ++nfail;
+        fail_size += sz;
+    }
+    return result;
 }
 
 
@@ -26,8 +41,8 @@ void* m61_malloc(size_t sz, const char* file, long line) {
 
 void m61_free(void* ptr, const char* file, long line) {
     (void) file, (void) line;   // avoid uninitialized variable warnings
-    // Your code here.
     base_free(ptr);
+    ++nfree;
 }
 
 
@@ -52,9 +67,12 @@ void* m61_calloc(size_t nmemb, size_t sz, const char* file, long line) {
 ///    Store the current memory statistics in `*stats`.
 
 void m61_get_statistics(m61_statistics* stats) {
-    // Stub: set all statistics to enormous numbers
-    memset(stats, 255, sizeof(m61_statistics));
-    // Your code here.
+    stats->nactive = ntotal - nfree;
+    stats->ntotal = ntotal;
+    stats->nfail = nfail;
+    stats->active_size = active_size;
+    stats->total_size = total_size;
+    stats->fail_size = fail_size;
 }
 
 
