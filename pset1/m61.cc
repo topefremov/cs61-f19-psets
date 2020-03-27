@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cinttypes>
 #include <cassert>
+#include <limits>
 
 static unsigned long long active_size = 0;
 static unsigned long long ntotal = 0;
@@ -12,6 +13,8 @@ static unsigned long long total_size = 0;
 static unsigned long long nfail = 0;
 static unsigned long long fail_size = 0;
 static unsigned long long nfree = 0;
+static uintptr_t min_heap = std::numeric_limits<uintptr_t>::max();
+static uintptr_t max_heap = 0;
 
 /// m61_malloc(sz, file, line)
 ///    Return a pointer to `sz` bytes of newly-allocated dynamic memory.
@@ -21,16 +24,37 @@ static unsigned long long nfree = 0;
 
 void* m61_malloc(size_t sz, const char* file, long line) {
     (void) file, (void) line;   // avoid uninitialized variable warnings
-    // Your code here.
-    void* result = base_malloc(sz);
-    if (result != 0) {
-        ++ntotal;
-        total_size += sz;
+    uintptr_t payload_addr;
+    m61_alloc_metadata metadata = { .size = sz };
+    size_t new_size = sz + sizeof(m61_alloc_metadata);
+    void* addr;
+
+    if (new_size < sz) {
+        // over
+        addr = nullptr;
     } else {
+        addr = base_malloc(new_size);
+    }
+
+    if (addr == nullptr) {
         ++nfail;
         fail_size += sz;
+        return addr;
+    } else {
+        memcpy(addr, &metadata, sizeof(m61_alloc_metadata));
+        payload_addr = ((uintptr_t) addr) + sizeof(m61_alloc_metadata);
+        if (payload_addr < min_heap) {
+            min_heap = payload_addr;
+        }
+        uintptr_t highest_address = payload_addr + sz;
+        if (highest_address > max_heap) {
+            max_heap = highest_address;
+        }
+        ++ntotal;
+        active_size += sz;
+        total_size += sz;    
     }
-    return result;
+    return (void*) payload_addr;
 }
 
 
@@ -41,8 +65,18 @@ void* m61_malloc(size_t sz, const char* file, long line) {
 
 void m61_free(void* ptr, const char* file, long line) {
     (void) file, (void) line;   // avoid uninitialized variable warnings
-    base_free(ptr);
-    ++nfree;
+    if (ptr != nullptr) {
+        if ((uintptr_t) ptr < min_heap || (uintptr_t) ptr > max_heap) {
+            fprintf(stderr, "MEMORY BUG: %s:%ld: invalid free of pointer %p, not in heap", file, line, ptr);
+            abort();
+        }
+
+        void* real_ptr = (void*) ((uintptr_t) ptr - sizeof(m61_alloc_metadata));
+        size_t free_size = ((m61_alloc_metadata*) real_ptr)->size;
+        base_free(real_ptr);
+        active_size -= free_size;
+         ++nfree;
+    }
 }
 
 
@@ -54,11 +88,16 @@ void m61_free(void* ptr, const char* file, long line) {
 ///    location `file`:`line`.
 
 void* m61_calloc(size_t nmemb, size_t sz, const char* file, long line) {
-    // Your code here (to fix test014).
-    void* ptr = m61_malloc(nmemb * sz, file, line);
-    if (ptr) {
-        memset(ptr, 0, nmemb * sz);
-    }
+    void* ptr = nullptr;
+    if (mult_ok(nmemb, sz)) {
+        ptr = m61_malloc(nmemb * sz, file, line);
+        if (ptr) {
+            memset(ptr, 0, nmemb * sz);
+        }
+    } else {
+        nfail++;
+        fail_size += nmemb * sz;
+    }    
     return ptr;
 }
 
@@ -73,6 +112,8 @@ void m61_get_statistics(m61_statistics* stats) {
     stats->active_size = active_size;
     stats->total_size = total_size;
     stats->fail_size = fail_size;
+    stats->heap_max = max_heap;
+    stats->heap_min = min_heap;
 }
 
 
@@ -104,4 +145,9 @@ void m61_print_leak_report() {
 
 void m61_print_heavy_hitter_report() {
     // Your heavy-hitters code here
+}
+
+bool mult_ok(size_t x, size_t y) {
+    size_t r = x * y;
+    return !x || r / x == y;
 }

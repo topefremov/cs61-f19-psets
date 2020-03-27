@@ -35,6 +35,11 @@ struct m61_statistics {
     uintptr_t heap_max;                 // largest allocated addr
 };
 
+// Structure tracking per-allocation metadata.
+struct m61_alloc_metadata {
+    size_t size;
+};
+
 /// m61_get_statistics(stats)
 ///    Store the current memory statistics in `*stats`.
 void m61_get_statistics(m61_statistics* stats);
@@ -56,6 +61,7 @@ void m61_print_heavy_hitter_report();
 void* base_malloc(size_t sz);
 void base_free(void* ptr);
 void base_allocator_disable(bool is_disabled);
+bool mult_ok(size_t x, size_t y);
 
 
 /// Override system versions with our versions.
