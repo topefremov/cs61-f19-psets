@@ -6,6 +6,10 @@
 #include <cstdio>
 #include <new>
 
+constexpr unsigned int MAGIC = 717717717;
+constexpr unsigned int block_active = 3333;
+constexpr unsigned int block_inactive = 4444;
+
 
 /// m61_malloc(sz, file, line)
 ///    Return a pointer to `sz` bytes of newly-allocated dynamic memory.
@@ -37,7 +41,12 @@ struct m61_statistics {
 
 // Structure tracking per-allocation metadata.
 struct m61_alloc_metadata {
+    // size of an allocated block 
     size_t size;
+    // denote if the block is allocated by malloc
+    unsigned int magic;
+    // 3333 - active, 4444 - inactive
+    unsigned int active;
 };
 
 /// m61_get_statistics(stats)

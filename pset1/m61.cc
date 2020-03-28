@@ -25,7 +25,7 @@ static uintptr_t max_heap = 0;
 void* m61_malloc(size_t sz, const char* file, long line) {
     (void) file, (void) line;   // avoid uninitialized variable warnings
     uintptr_t payload_addr;
-    m61_alloc_metadata metadata = { .size = sz };
+    m61_alloc_metadata metadata = { .size = sz, .magic = MAGIC, .active = block_active };
     size_t new_size = sz + sizeof(m61_alloc_metadata);
     void* addr;
 
@@ -67,12 +67,22 @@ void m61_free(void* ptr, const char* file, long line) {
     (void) file, (void) line;   // avoid uninitialized variable warnings
     if (ptr != nullptr) {
         if ((uintptr_t) ptr < min_heap || (uintptr_t) ptr > max_heap) {
-            fprintf(stderr, "MEMORY BUG: %s:%ld: invalid free of pointer %p, not in heap", file, line, ptr);
+            fprintf(stderr, "MEMORY BUG: %s:%ld: invalid free of pointer %p, not in heap\n", file, line, ptr);
             abort();
         }
 
         void* real_ptr = (void*) ((uintptr_t) ptr - sizeof(m61_alloc_metadata));
-        size_t free_size = ((m61_alloc_metadata*) real_ptr)->size;
+        m61_alloc_metadata* metadata = (m61_alloc_metadata*) real_ptr;
+        size_t free_size = metadata->size;
+        if (metadata->magic != MAGIC) {
+            fprintf(stderr, "MEMORY BUG: %s:%ld: invalid free of pointer %p, not allocated\n", file, line, ptr);
+            abort();   
+        }
+        if (metadata->active == block_inactive) {
+            fprintf(stderr, "MEMORY BUG: %s:%ld: invalid free of pointer %p, double free\n", file, line, ptr);
+            abort();
+        }
+        metadata->active = block_inactive;
         base_free(real_ptr);
         active_size -= free_size;
          ++nfree;
