@@ -15,6 +15,8 @@ static unsigned long long fail_size = 0;
 static unsigned long long nfree = 0;
 static uintptr_t min_heap = std::numeric_limits<uintptr_t>::max();
 static uintptr_t max_heap = 0;
+m61_alloc_metadata* head = nullptr;
+m61_alloc_metadata* tail = nullptr;
 
 /// m61_malloc(sz, file, line)
 ///    Return a pointer to `sz` bytes of newly-allocated dynamic memory.
@@ -24,29 +26,41 @@ static uintptr_t max_heap = 0;
 
 void* m61_malloc(size_t sz, const char* file, long line) {
     (void) file, (void) line;   // avoid uninitialized variable warnings
-    uintptr_t payload_addr;
-    m61_alloc_metadata metadata = { .size = sz, .magic = MAGIC, .active = block_active };
-    size_t new_size = sz + sizeof(m61_alloc_metadata);
-    void* addr;
+    uintptr_t payload_ptr;
+    m61_alloc_metadata metadata = { .payload_ptr = nullptr, .size = sz, .magic = MAGIC, 
+                                    .next = nullptr, .prev = nullptr, .file = file, .line = line };
+    size_t new_size = sz + sizeof(m61_alloc_metadata) + sizeof(unsigned char);
+    void* ptr;
 
     if (new_size < sz) {
         // over
-        addr = nullptr;
+        ptr = nullptr;
     } else {
-        addr = base_malloc(new_size);
+        ptr = base_malloc(new_size);
     }
 
-    if (addr == nullptr) {
+    if (ptr == nullptr) {
         ++nfail;
         fail_size += sz;
-        return addr;
+        return ptr;
     } else {
-        memcpy(addr, &metadata, sizeof(m61_alloc_metadata));
-        payload_addr = ((uintptr_t) addr) + sizeof(m61_alloc_metadata);
-        if (payload_addr < min_heap) {
-            min_heap = payload_addr;
+        payload_ptr = ((uintptr_t) ptr) + sizeof(m61_alloc_metadata);
+        metadata.payload_ptr = (void*) payload_ptr;
+        memcpy(ptr, &metadata, sizeof(m61_alloc_metadata));
+        memcpy((void*) (((uintptr_t) ptr) + sizeof(m61_alloc_metadata) + sz), &TRAILING_MAGIC, sizeof(unsigned char));
+        if (payload_ptr < min_heap) {
+            min_heap = payload_ptr;
         }
-        uintptr_t highest_address = payload_addr + sz;
+        m61_alloc_metadata* metadata_ptr = (m61_alloc_metadata*) ptr;
+        if (head != nullptr) {
+            metadata_ptr->next = head;
+            head->prev = metadata_ptr;
+            head = metadata_ptr;
+        } else {
+            head = metadata_ptr;
+            tail = metadata_ptr;
+        }
+        uintptr_t highest_address = payload_ptr + sz;
         if (highest_address > max_heap) {
             max_heap = highest_address;
         }
@@ -54,7 +68,7 @@ void* m61_malloc(size_t sz, const char* file, long line) {
         active_size += sz;
         total_size += sz;    
     }
-    return (void*) payload_addr;
+    return (void*) payload_ptr;
 }
 
 
@@ -72,17 +86,48 @@ void m61_free(void* ptr, const char* file, long line) {
         }
 
         void* real_ptr = (void*) ((uintptr_t) ptr - sizeof(m61_alloc_metadata));
-        m61_alloc_metadata* metadata = (m61_alloc_metadata*) real_ptr;
-        size_t free_size = metadata->size;
-        if (metadata->magic != MAGIC) {
+        m61_alloc_metadata* metadata_ptr = (m61_alloc_metadata*) real_ptr;
+        if (((uintptr_t) real_ptr & 7) != 0 || metadata_ptr->magic != MAGIC || metadata_ptr->payload_ptr != ptr 
+            || (metadata_ptr->prev != nullptr && metadata_ptr->prev->magic != MAGIC)
+            || (metadata_ptr->next != nullptr && metadata_ptr->next->magic != MAGIC)) {
             fprintf(stderr, "MEMORY BUG: %s:%ld: invalid free of pointer %p, not allocated\n", file, line, ptr);
+            m61_alloc_metadata* cur = head;
+            uintptr_t fptr = (uintptr_t) ptr; 
+            while (cur) {
+                uintptr_t payload_ptr = (uintptr_t) cur->payload_ptr;
+                if (fptr > payload_ptr && fptr <= (payload_ptr + cur->size)) {
+                    fprintf(stderr, "  %s:%ld: %p is %ld bytes inside a %ld byte region allocated here\n", cur->file, cur->line, ptr, 
+                        (fptr - payload_ptr), cur->size);
+                    break;
+                }
+                cur = cur->next; 
+            }
             abort();   
         }
-        if (metadata->active == block_inactive) {
+        size_t free_size = metadata_ptr->size;
+        if ((metadata_ptr->prev == nullptr && metadata_ptr != head) 
+            || (metadata_ptr->next == nullptr && metadata_ptr != tail)
+            || (metadata_ptr->prev != nullptr && metadata_ptr->prev->next != metadata_ptr)
+            || (metadata_ptr->next != nullptr && metadata_ptr->next->prev != metadata_ptr)) {
             fprintf(stderr, "MEMORY BUG: %s:%ld: invalid free of pointer %p, double free\n", file, line, ptr);
             abort();
         }
-        metadata->active = block_inactive;
+        unsigned char* trailing_magic = (unsigned char*) ((uintptr_t) ptr + metadata_ptr->size);
+        if (*trailing_magic != TRAILING_MAGIC) {
+            fprintf(stderr, "MEMORY BUG: %s:%ld: detected wild write during free of pointer %p\n", file, line, ptr);
+            abort();
+        }
+
+        if (metadata_ptr->next) {
+            metadata_ptr->next->prev = metadata_ptr->prev;
+        } else {
+            tail = metadata_ptr->prev;
+        }
+        if (metadata_ptr->prev) {
+            metadata_ptr->prev->next = metadata_ptr->next;
+        } else {
+            head = metadata_ptr->next;
+        }
         base_free(real_ptr);
         active_size -= free_size;
          ++nfree;
@@ -146,7 +191,12 @@ void m61_print_statistics() {
 ///    memory.
 
 void m61_print_leak_report() {
-    // Your code here.
+    m61_alloc_metadata* cur = head;
+    while (cur) {
+        void* payload_ptr = (void*) ((uintptr_t) cur + sizeof(m61_alloc_metadata));
+        printf("LEAK CHECK: %s:%ld: allocated object %p with size %lu\n", cur->file, cur->line, payload_ptr, cur->size);
+        cur = cur->next;
+    }
 }
 
 

@@ -6,9 +6,8 @@
 #include <cstdio>
 #include <new>
 
-constexpr unsigned int MAGIC = 717717717;
-constexpr unsigned int block_active = 3333;
-constexpr unsigned int block_inactive = 4444;
+constexpr unsigned int MAGIC = 0xBEEF;
+constexpr unsigned char TRAILING_MAGIC = '@';
 
 
 /// m61_malloc(sz, file, line)
@@ -41,12 +40,13 @@ struct m61_statistics {
 
 // Structure tracking per-allocation metadata.
 struct m61_alloc_metadata {
-    // size of an allocated block 
-    size_t size;
-    // denote if the block is allocated by malloc
-    unsigned int magic;
-    // 3333 - active, 4444 - inactive
-    unsigned int active;
+    void* payload_ptr;          // pointer to payload
+    size_t size;                // size of an allocated block
+    unsigned int magic;         // denote if the block is allocated by malloc
+    m61_alloc_metadata* next;   // next allocated block in the list
+    m61_alloc_metadata* prev;   // previous allocated block in the list
+    const char* file;           // file name where malloc was called 
+    long line;                  // line number where malloc was called
 };
 
 /// m61_get_statistics(stats)
